@@ -2,20 +2,28 @@ import streamlit as st
 from ultralytics import YOLO
 import cv2
 import tempfile
-import os
+import time
 
-st.set_page_config(page_title="AI Road Safety System", layout="wide")
+st.set_page_config(
+    page_title="AI Road Safety System",
+    layout="wide"
+)
 
 st.title("🚗 AI Road Safety System")
-st.write("Upload a road video and get a processed detection video.")
+st.write("Upload a road video for live AI detection.")
 
-# Load YOLO model
+# -------------------------
+# LOAD MODEL
+# -------------------------
 @st.cache_resource
 def load_model():
     return YOLO("yolov8n.pt")
 
 model = load_model()
 
+# -------------------------
+# UPLOAD VIDEO
+# -------------------------
 uploaded_file = st.file_uploader(
     "Upload Video",
     type=["mp4", "avi", "mov"]
@@ -23,43 +31,38 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file is not None:
 
-    st.info("Video uploaded successfully.")
+    st.success("Video Uploaded Successfully")
 
-    # Save uploaded file
-    temp_input = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-    temp_input.write(uploaded_file.read())
-    temp_input.close()
+    temp_file = tempfile.NamedTemporaryFile(
+        delete=False,
+        suffix=".mp4"
+    )
 
-    cap = cv2.VideoCapture(temp_input.name)
+    temp_file.write(uploaded_file.read())
+    temp_file.close()
+
+    cap = cv2.VideoCapture(temp_file.name)
 
     if not cap.isOpened():
         st.error("Could not open video.")
         st.stop()
 
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS)
 
     if fps <= 0:
         fps = 30
 
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-    output_path = "output.mp4"
-
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-
-    out = cv2.VideoWriter(
-        output_path,
-        fourcc,
-        fps,
-        (width, height)
+    total_frames = int(
+        cap.get(cv2.CAP_PROP_FRAME_COUNT)
     )
 
-    progress = st.progress(0)
-    status = st.empty()
+    progress_bar = st.progress(0)
 
-    frame_num = 0
+    status_text = st.empty()
+
+    frame_placeholder = st.empty()
+
+    frame_number = 0
 
     while True:
 
@@ -68,9 +71,13 @@ if uploaded_file is not None:
         if not ret:
             break
 
-        frame_num += 1
+        frame_number += 1
 
-        results = model(frame, conf=0.25, verbose=False)
+        results = model(
+            frame,
+            conf=0.25,
+            verbose=False
+        )
 
         h, w = frame.shape[:2]
 
@@ -95,20 +102,29 @@ if uploaded_file is not None:
             ]:
                 continue
 
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            x1, y1, x2, y2 = map(
+                int,
+                box.xyxy[0]
+            )
 
             area = (x2 - x1) * (y2 - y1)
+
             cx = (x1 + x2) // 2
 
-            if front_left < cx < front_right and area > 5000:
+            if (
+                front_left < cx < front_right
+                and area > 5000
+            ):
 
                 danger = True
+
                 color = (0, 0, 255)
                 text = "DANGER"
 
             elif area > 2000:
 
                 alert = True
+
                 color = (0, 165, 255)
                 text = "ALERT"
 
@@ -133,7 +149,8 @@ if uploaded_file is not None:
                 2
             )
 
-        # Lane zone lines
+        # Lane guide lines
+
         cv2.line(
             frame,
             (front_left, 0),
@@ -149,6 +166,8 @@ if uploaded_file is not None:
             (255, 255, 255),
             2
         )
+
+        # Road status
 
         if danger:
 
@@ -186,35 +205,27 @@ if uploaded_file is not None:
                 3
             )
 
-        out.write(frame)
-
-        if total_frames > 0:
-            progress.progress(min(frame_num / total_frames, 1.0))
-
-        status.text(
-            f"Processing frame {frame_num}/{total_frames}"
+        frame_placeholder.image(
+            frame,
+            channels="BGR",
+            use_container_width=True
         )
 
+        if total_frames > 0:
+
+            progress_bar.progress(
+                min(
+                    frame_number / total_frames,
+                    1.0
+                )
+            )
+
+        status_text.text(
+            f"Frame {frame_number}/{total_frames}"
+        )
+
+        time.sleep(1 / fps)
+
     cap.release()
-    out.release()
 
-    st.success("✅ Processing Complete")
-
-    st.subheader("Processed Video")
-
-    with open(output_path, "rb") as f:
-        video_bytes = f.read()
-
-    st.video(video_bytes)
-
-    st.download_button(
-        "📥 Download Processed Video",
-        data=video_bytes,
-        file_name="processed_video.mp4",
-        mime="video/mp4"
-    )
-
-    try:
-        os.remove(temp_input.name)
-    except:
-        pass
+    st.success("✅ Detection Complete")
